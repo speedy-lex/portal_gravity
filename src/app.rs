@@ -396,7 +396,7 @@ impl App {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             compute_pass.set_bind_group(0, Some(&state.compute_bind_group), &[]);
             compute_pass.set_pipeline(&state.compute_pipeline);
-            compute_pass.dispatch_workgroups(state.texture.width(), state.texture.height(), 1);
+            compute_pass.dispatch_workgroups(state.texture.width().div_ceil(16), state.texture.height().div_ceil(16), 1);
         }
         {
             let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
