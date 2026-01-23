@@ -1,32 +1,55 @@
 use crate::egui_tools::EguiRenderer;
-use egui_wgpu::ScreenDescriptor;
-use egui_wgpu::wgpu::SurfaceError;
-use std::borrow::Cow;
+use bytemuck::bytes_of;
+use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
+use glam::{EulerRot, Mat4, Vec2, Vec3};
+use std::num::NonZero;
+use std::{borrow::Cow, f32::consts::FRAC_PI_2};
+use std::collections::HashSet;
 use std::sync::Arc;
 use wgpu::{
     BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingResource, BindingType, Color, ColorWrites, ComputePipeline, ComputePipelineDescriptor,
-    Device, Extent3d, FilterMode, FragmentState, FrontFace, LoadOp, MultisampleState, Operations,
-    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource,
-    ShaderStages, StoreOp, Surface, SurfaceConfiguration, Texture, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension,
-    VertexState,
+    BindingResource, BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferUsages, Color,
+    ColorWrites, ComputePipeline, ComputePipelineDescriptor, Device, Extent3d, FilterMode,
+    FragmentState, FrontFace, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor,
+    PolygonMode, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface,
+    SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
-use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
-use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
-use winit::window::{Window, WindowId};
+use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::WindowEvent, event_loop::ActiveEventLoop, keyboard::{PhysicalKey, KeyCode}, window::{CursorGrabMode, Window, WindowId}};
+
+#[derive(Debug, Clone, Copy)]
+pub struct Camera {
+    pub pos: Vec3,
+    pub pitch: f32,
+    pub yaw: f32,
+    pub fov: f32,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self { pos: Default::default(), pitch: Default::default(), yaw: Default::default(), fov: FRAC_PI_2 }
+    }
+}
+impl Camera {
+    pub fn get_uniform(&self, uniform: &mut [u8]) {
+        let mat = Mat4::from_translation(self.pos) * Mat4::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0);
+        uniform[0..64].copy_from_slice(bytes_of(&mat));
+        uniform[64..68].copy_from_slice(bytes_of(&self.fov));
+    }
+}
 
 pub struct AppState {
+    pub keys: HashSet<PhysicalKey>,
+    pub camera: Camera,
     pub device: Device,
     pub queue: Queue,
     pub surface_config: SurfaceConfiguration,
     pub surface: Surface<'static>,
     pub texture: Texture,
     pub sampler: Sampler,
+    pub uniform_buffer: Buffer,
     pub compute_pipeline: ComputePipeline,
     pub compute_bind_group_layout: BindGroupLayout,
     pub compute_bind_group: BindGroup,
@@ -95,27 +118,66 @@ impl AppState {
             ..Default::default()
         });
 
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 2048,
+            usage: BufferUsages::UNIFORM | BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let compute_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: None,
-                entries: &[BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: TextureFormat::Rgba32Float,
-                        view_dimension: TextureViewDimension::D2,
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: TextureFormat::Rgba32Float,
+                            view_dimension: TextureViewDimension::D2,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None
+                        },
+                        count: None,
+                    },
+                ],
             });
         let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &compute_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::TextureView(&texture_view),
-            }],
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&texture_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 0, size: NonZero::new(256) }),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 256, size: None }),
+                },
+            ],
         });
         let compute = device.create_shader_module(ShaderModuleDescriptor {
             label: None,
@@ -228,12 +290,15 @@ impl AppState {
         let scale_factor = 1.0;
 
         Self {
+            keys: Default::default(),
+            camera: Default::default(),
             device,
             queue,
             surface,
             surface_config,
             texture,
             sampler,
+            uniform_buffer,
             compute_pipeline,
             compute_bind_group_layout,
             compute_bind_group,
@@ -339,24 +404,68 @@ impl App {
                     BindGroupEntry {
                         binding: 0,
                         resource: BindingResource::TextureView(&texture_view),
-                    }
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &state.uniform_buffer, offset: 0, size: NonZero::new(256) }),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &state.uniform_buffer, offset: 256, size: None }),
+                    },
                 ],
             });
-
         }
     }
 
     fn handle_redraw(&mut self) {
+        let state = self.state.as_mut().unwrap();
+
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::ArrowLeft)) {
+            state.camera.yaw -= 0.05;
+        }
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::ArrowRight)) {
+            state.camera.yaw += 0.05;
+        }
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::ArrowUp)) {
+            state.camera.pitch -= 0.05;
+        }
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::ArrowDown)) {
+            state.camera.pitch += 0.05;
+        }
+        state.camera.pitch = state.camera.pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+
+        let mut movement = Vec2::ZERO;
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyW)) {
+            movement += Vec2::Y;
+        }
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyS)) {
+            movement += Vec2::NEG_Y;
+        }
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyD)) {
+            movement += Vec2::X;
+        }
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyA)) {
+            movement += Vec2::NEG_X;
+        }
+        movement = Vec2::from_angle(-state.camera.yaw).rotate(movement);
+        movement /= 10.0;
+        state.camera.pos += Vec3::new(movement.x, 0.0, movement.y);
+
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::Space)) {
+            state.camera.pos += Vec3::Y * 0.05;
+        }
+        if state.keys.contains(&PhysicalKey::Code(KeyCode::ShiftLeft)) {
+            state.camera.pos += Vec3::Y * -0.05;
+        }
+
         // Attempt to handle minimizing window
         if let Some(window) = self.window.as_ref()
-            && let Some(min) = window.is_minimized()
-            && min
+            && let Some(true) = window.is_minimized()
         {
             println!("Window is minimized");
             return;
         }
-
-        let state = self.state.as_mut().unwrap();
 
         let screen_descriptor = ScreenDescriptor {
             size_in_pixels: [state.surface_config.width, state.surface_config.height],
@@ -385,19 +494,26 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        let mut data = [0; 256];
+        state.camera.get_uniform(&mut data);
+        state.queue.write_buffer(&state.uniform_buffer, 0, &data);
+
         let mut encoder = state
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let window = self.window.as_ref().unwrap();
-
-        // TODO
         {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            let mut compute_pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             compute_pass.set_bind_group(0, Some(&state.compute_bind_group), &[]);
             compute_pass.set_pipeline(&state.compute_pipeline);
-            compute_pass.dispatch_workgroups(state.texture.width().div_ceil(16), state.texture.height().div_ceil(16), 1);
+            compute_pass.dispatch_workgroups(
+                state.texture.width().div_ceil(16),
+                state.texture.height().div_ceil(16),
+                1,
+            );
         }
+
         {
             let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("main scene"),
@@ -419,18 +535,20 @@ impl App {
             render_pass.draw(0..4, 0..1);
         }
 
+        let window = self.window.as_ref().unwrap();
+
         {
             state.egui_renderer.begin_frame(window);
 
-            egui::Window::new("winit + egui + wgpu says hello!")
+            egui::Window::new("egui window")
                 .resizable(true)
                 .vscroll(true)
                 .default_open(false)
                 .show(state.egui_renderer.context(), |ui| {
-                    ui.label("Label!");
+                    ui.label("label");
 
-                    if ui.button("Button!").clicked() {
-                        println!("boom!")
+                    if ui.button("button").clicked() {
+                        println!("click")
                     }
 
                     ui.separator();
@@ -468,6 +586,8 @@ impl ApplicationHandler for App {
         let window = event_loop
             .create_window(Window::default_attributes())
             .unwrap();
+        // window.set_cursor_visible(false);
+        // window.set_cursor_grab(CursorGrabMode::Locked).unwrap();
         pollster::block_on(self.set_window(window));
     }
 
@@ -481,7 +601,6 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
-                println!("The close button was pressed; stopping");
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
@@ -491,6 +610,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(new_size) => {
                 self.handle_resized(new_size.width, new_size.height);
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if !self.state.as_mut().unwrap().egui_renderer.context().wants_keyboard_input() {
+                    match event.state {
+                        winit::event::ElementState::Pressed => { self.state.as_mut().unwrap().keys.insert(event.physical_key); }
+                        winit::event::ElementState::Released => { self.state.as_mut().unwrap().keys.remove(&event.physical_key); }
+                    }
+                }
             }
             _ => (),
         }
