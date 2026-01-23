@@ -2,6 +2,7 @@ use crate::egui_tools::EguiRenderer;
 use bytemuck::bytes_of;
 use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
 use glam::{EulerRot, Mat4, Vec2, Vec3};
+use winit::event::{DeviceEvent, MouseButton};
 use std::num::NonZero;
 use std::{borrow::Cow, f32::consts::FRAC_PI_2};
 use std::collections::HashSet;
@@ -56,6 +57,8 @@ pub struct AppState {
     pub bind_group_layout: BindGroupLayout,
     pub bind_group: BindGroup,
     pub pipeline: RenderPipeline,
+
+    pub focused_renderer: bool,
     pub scale_factor: f32,
     pub egui_renderer: EguiRenderer,
 }
@@ -305,6 +308,7 @@ impl AppState {
             bind_group_layout,
             bind_group,
             pipeline,
+            focused_renderer: false,
             egui_renderer,
             scale_factor,
         }
@@ -614,12 +618,49 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if !self.state.as_mut().unwrap().egui_renderer.context().wants_keyboard_input() {
                     match event.state {
-                        winit::event::ElementState::Pressed => { self.state.as_mut().unwrap().keys.insert(event.physical_key); }
+                        winit::event::ElementState::Pressed => {
+                            self.state.as_mut().unwrap().keys.insert(event.physical_key);
+                            if let PhysicalKey::Code(KeyCode::Escape) = event.physical_key {
+                                self.state.as_mut().unwrap().focused_renderer = false;
+                            }
+                        }
                         winit::event::ElementState::Released => { self.state.as_mut().unwrap().keys.remove(&event.physical_key); }
                     }
                 }
             }
+            WindowEvent::MouseInput { button, .. } => {
+                if button == MouseButton::Left {
+                    self.state.as_mut().unwrap().focused_renderer = true;
+                }
+            }
             _ => (),
+        }
+        let state = self.state
+            .as_mut()
+            .unwrap();
+        state.focused_renderer &= !state.egui_renderer.context().wants_pointer_input();
+
+        let window = self.window.as_mut().unwrap();
+        window.set_cursor_visible(!state.focused_renderer);
+        let _ = window.set_cursor_grab(
+            if state.focused_renderer {
+                CursorGrabMode::Locked
+            } else {
+                CursorGrabMode::None
+            }
+        );
+    }
+
+    fn device_event(
+            &mut self,
+            _event_loop: &ActiveEventLoop,
+            _device_id: winit::event::DeviceId,
+            event: winit::event::DeviceEvent,
+        ) {
+        let state = self.state.as_mut().unwrap();
+        if let DeviceEvent::MouseMotion { delta: (x, y) } = event && state.focused_renderer {
+               state.camera.yaw += x as f32 / 1024.0;
+               state.camera.pitch += y as f32 / 1024.0;
         }
     }
 }
