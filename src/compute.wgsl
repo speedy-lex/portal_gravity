@@ -11,7 +11,7 @@ struct input {
 }
 
 @group(0) @binding(1) var<uniform> uniform: input;
-@group(0) @binding(2) var<storage, read> primitives: primitive;
+@group(0) @binding(2) var<storage, read> primitives: array<primitive>;
 
 struct hit {
     pos: vec3f,
@@ -94,29 +94,37 @@ fn intersect_sphere(x: ray, transform: mat4x4f) -> hit {
 }
 
 fn ray_color(r: ray) -> vec3f {
-    let hit_a = intersect_sphere(
-        r,
-        mat4x4f(
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 0.5, 0,
-            0, 0, 0, 1,
-        )
-    );
-    let k = sqrt(2.0)/2.0;
-    let transform = mat4x4f(
-        k, 0, -k, 0,
-        0, 1, 0, 0,
-        k, 0, k, 0,
-        0, 0, 0, 1,
-    );
-    var hit = intersect_box(r, transform);
-
-    if hit.t <= 0 || (hit.t > hit_a.t && hit_a.t > 0) {
-        hit = hit_a;
+    var closest = hit(vec3f(0), vec3f(0), 3.4028234e+38); // biggest finite f32
+    for (var i: u32 = 0; i < uniform.primitive_count; i++) {
+        let p = primitives[i];
+        switch p.ptype {
+            case 1: {
+                // cube
+                let hit = intersect_box(r, p.inv_transform);
+                if hit.t <= 0 {
+                    continue;
+                }
+                if hit.t < closest.t {
+                    closest = hit;
+                }
+            }
+            case 2: {
+                // sphere
+                let hit = intersect_sphere(r, p.inv_transform);
+                if hit.t <= 0 {
+                    continue;
+                }
+                if hit.t < closest.t {
+                    closest = hit;
+                }
+            }
+            default: {
+                return vec3f(1, 0, 1);
+            }
+        }
     }
-    if hit.t != 0 {
-        return vec3f(dot(hit.normal, -normalize(vec3f(-1, -3, 0)))) / 4 + vec3f(0.75);
+    if closest.t != 3.4028234e+38 {
+        return vec3f(dot(closest.normal, -normalize(vec3f(-1, -3, 0)))) / 4 + vec3f(0.75);
     }
     return sky_color(normalize(r.dir));
 }

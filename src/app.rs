@@ -1,7 +1,7 @@
 use crate::egui_tools::EguiRenderer;
 use bytemuck::bytes_of;
 use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
-use glam::{EulerRot, Mat4, Vec2, Vec3};
+use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use winit::event::{DeviceEvent, MouseButton};
 use std::num::NonZero;
 use std::{borrow::Cow, f32::consts::FRAC_PI_2};
@@ -34,16 +34,46 @@ impl Default for Camera {
     }
 }
 impl Camera {
-    pub fn get_uniform(&self, uniform: &mut [u8]) {
+    pub fn write_uniform(&self, uniform: &mut [u8]) {
         let mat = Mat4::from_translation(self.pos) * Mat4::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0);
         uniform[0..64].copy_from_slice(bytes_of(&mat));
         uniform[64..68].copy_from_slice(bytes_of(&self.fov));
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum PType {
+    Cube = 1,
+    Sphere = 2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Primitive {
+    pub ty: PType,
+    pub pos: Vec3,
+    pub rot: Quat,
+    pub scale: Vec3,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Scene {
+    pub primitives: Vec<Primitive>,
+}
+impl Scene {
+    pub fn write_uniform(&self, uniform: &mut [u8]) {
+        uniform[68..72].copy_from_slice(&(self.primitives.len() as u32).to_le_bytes());
+        for (primitive, i) in self.primitives.iter().zip((0..).map(|x| x * 80 + 256)) {
+            uniform[i..i + 4].copy_from_slice(&(primitive.ty as u32).to_le_bytes());
+            let transform = Mat4::from_translation(primitive.pos) * Mat4::from_quat(primitive.rot) * Mat4::from_scale(primitive.scale);
+            uniform[i+16..i+80].copy_from_slice(bytes_of(&transform.inverse()));
+        }
+    }
+}
+
 pub struct AppState {
     pub keys: HashSet<PhysicalKey>,
     pub camera: Camera,
+    pub scene: Scene,
     pub device: Device,
     pub queue: Queue,
     pub surface_config: SurfaceConfiguration,
@@ -292,9 +322,14 @@ impl AppState {
 
         let scale_factor = 1.0;
 
+        let scene = Scene {
+            primitives: vec![Primitive { ty: PType::Cube, pos: Vec3::ZERO, rot: Quat::IDENTITY, scale: Vec3::ONE }]
+        };
+
         Self {
             keys: Default::default(),
             camera: Default::default(),
+            scene,
             device,
             queue,
             surface,
@@ -463,6 +498,8 @@ impl App {
             state.camera.pos += Vec3::Y * -0.05;
         }
 
+        state.scene.primitives[0].rot *= Quat::from_rotation_y(0.01);
+
         // Attempt to handle minimizing window
         if let Some(window) = self.window.as_ref()
             && let Some(true) = window.is_minimized()
@@ -498,8 +535,9 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut data = [0; 256];
-        state.camera.get_uniform(&mut data);
+        let mut data = [0; 2048];
+        state.camera.write_uniform(&mut data);
+        state.scene.write_uniform(&mut data);
         state.queue.write_buffer(&state.uniform_buffer, 0, &data);
 
         let mut encoder = state
@@ -590,8 +628,7 @@ impl ApplicationHandler for App {
         let window = event_loop
             .create_window(Window::default_attributes())
             .unwrap();
-        // window.set_cursor_visible(false);
-        // window.set_cursor_grab(CursorGrabMode::Locked).unwrap();
+
         pollster::block_on(self.set_window(window));
     }
 
@@ -649,6 +686,9 @@ impl ApplicationHandler for App {
                 CursorGrabMode::None
             }
         );
+        if !state.focused_renderer {
+            state.keys.clear();
+        }
     }
 
     fn device_event(
@@ -659,8 +699,8 @@ impl ApplicationHandler for App {
         ) {
         let state = self.state.as_mut().unwrap();
         if let DeviceEvent::MouseMotion { delta: (x, y) } = event && state.focused_renderer {
-               state.camera.yaw += x as f32 / 1024.0;
-               state.camera.pitch += y as f32 / 1024.0;
+               state.camera.yaw += x as f32 / 768.0;
+               state.camera.pitch += y as f32 / 768.0;
         }
     }
 }
