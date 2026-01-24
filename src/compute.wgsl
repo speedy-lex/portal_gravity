@@ -2,6 +2,7 @@
 
 struct primitive {
     ptype: u32,
+    transform: mat4x4f,
     inv_transform: mat4x4f,
 }
 struct input {
@@ -36,9 +37,9 @@ fn sky_color(dir: vec3f) -> vec3f {
     return mix(vec3f(1), vec3f(0.5, 0.7, 1.0), dir.y / 2 + 0.5);
 }
 
-fn intersect_box(a: ray, transform: mat4x4f) -> hit {
+fn intersect_box(a: ray, transform: mat4x4f, inv_transform: mat4x4f) -> hit {
     var r = a;
-    transform_ray(&r, transform);
+    transform_ray(&r, inv_transform);
 
     let box_min = vec3f(-1.0);
     let box_max = vec3f(1.0);
@@ -65,17 +66,21 @@ fn intersect_box(a: ray, transform: mat4x4f) -> hit {
     let pos = at(r, tmin);
     let pos_m = abs(pos);
     let pos_max = max(max(pos_m.x, pos_m.y), pos_m.z);
+    
+    var normal: vec3f;
     if pos_max == pos_m.x {
-        return hit(at(a, tmin), vec3f(pos.x, 0, 0), tmin);
+        normal = vec3f(pos.x, 0, 0);
     } else if pos_max == pos_m.y {
-        return hit(at(a, tmin), vec3f(0, pos.y, 0), tmin);
+        normal = vec3f(0, pos.y, 0);
     } else {
-        return hit(at(a, tmin), vec3f(0, 0, pos.z), tmin);
+        normal = vec3f(0, 0, pos.z);
     }
+
+    return hit(at(a, tmin), (transform * vec4f(normal, 0)).xyz, tmin);
 }
-fn intersect_sphere(x: ray, transform: mat4x4f) -> hit {
+fn intersect_sphere(x: ray, transform: mat4x4f, inv_transform: mat4x4f) -> hit {
     var r = x;
-    transform_ray(&r, transform);
+    transform_ray(&r, inv_transform);
 
     let oc = -r.orig;
     let a = dot(r.dir, r.dir);
@@ -87,7 +92,7 @@ fn intersect_sphere(x: ray, transform: mat4x4f) -> hit {
         let dist = (-b - sqrt(discriminant)) / (2*a);
         if dist > 0 {
             let normal = normalize(at(r, dist));
-            return hit(at(x, dist), normal, dist);
+            return hit(at(x, dist), (transform * vec4f(normal, 0)).xyz, dist);
         }
     }
     return hit(vec3f(0), vec3f(0), 0);
@@ -100,7 +105,7 @@ fn ray_color(r: ray) -> vec3f {
         switch p.ptype {
             case 1: {
                 // cube
-                let hit = intersect_box(r, p.inv_transform);
+                let hit = intersect_box(r, p.transform, p.inv_transform);
                 if hit.t <= 0 {
                     continue;
                 }
@@ -110,7 +115,7 @@ fn ray_color(r: ray) -> vec3f {
             }
             case 2: {
                 // sphere
-                let hit = intersect_sphere(r, p.inv_transform);
+                let hit = intersect_sphere(r, p.transform, p.inv_transform);
                 if hit.t <= 0 {
                     continue;
                 }

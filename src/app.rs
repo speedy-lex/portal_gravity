@@ -62,10 +62,11 @@ pub struct Scene {
 impl Scene {
     pub fn write_uniform(&self, uniform: &mut [u8]) {
         uniform[68..72].copy_from_slice(&(self.primitives.len() as u32).to_le_bytes());
-        for (primitive, i) in self.primitives.iter().zip((0..).map(|x| x * 80 + 256)) {
+        for (primitive, i) in self.primitives.iter().zip((0..).map(|x| x * 144 + 256)) {
             uniform[i..i + 4].copy_from_slice(&(primitive.ty as u32).to_le_bytes());
             let transform = Mat4::from_translation(primitive.pos) * Mat4::from_quat(primitive.rot) * Mat4::from_scale(primitive.scale);
-            uniform[i+16..i+80].copy_from_slice(bytes_of(&transform.inverse()));
+            uniform[i+16..i+80].copy_from_slice(bytes_of(&transform));
+            uniform[i+80..i+144].copy_from_slice(bytes_of(&transform.inverse()));
         }
     }
 }
@@ -323,7 +324,10 @@ impl AppState {
         let scale_factor = 1.0;
 
         let scene = Scene {
-            primitives: vec![Primitive { ty: PType::Cube, pos: Vec3::ZERO, rot: Quat::IDENTITY, scale: Vec3::ONE }]
+            primitives: vec![
+                Primitive { ty: PType::Cube, pos: Vec3::ZERO, rot: Quat::IDENTITY, scale: Vec3::ONE },
+                Primitive { ty: PType::Sphere, pos: Vec3::new(0.0, 0.0, 4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
+            ]
         };
 
         Self {
@@ -498,7 +502,7 @@ impl App {
             state.camera.pos += Vec3::Y * -0.05;
         }
 
-        state.scene.primitives[0].rot *= Quat::from_rotation_y(0.01);
+        state.scene.primitives[0].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), 0.01);
 
         // Attempt to handle minimizing window
         if let Some(window) = self.window.as_ref()
