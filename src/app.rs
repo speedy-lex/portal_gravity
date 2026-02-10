@@ -4,6 +4,7 @@ use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use winit::event::{DeviceEvent, MouseButton};
 use std::num::NonZero;
+use std::time::Instant;
 use std::{borrow::Cow, f32::consts::FRAC_PI_2};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -56,14 +57,25 @@ pub struct Primitive {
     pub scale: Vec3,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PortalPair {
+    pub pos_a: Vec3,
+    pub rot_a: Quat,
+    pub scale_a: Vec3,
+    pub pos_b: Vec3,
+    pub rot_b: Quat,
+    pub scale_b: Vec3,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Scene {
     pub primitives: Vec<Primitive>,
+    pub portals: Vec<PortalPair>,
 }
 impl Scene {
     pub fn write_uniform(&self, uniform: &mut [u8]) {
         uniform[68..72].copy_from_slice(&(self.primitives.len() as u32).to_le_bytes());
-        for (primitive, i) in self.primitives.iter().zip((0..).map(|x| x * 144 + 256)) {
+        for (primitive, i) in self.primitives.iter().zip((0..).map(|x| x * 144 + 4096 + 256)) {
             uniform[i..i + 4].copy_from_slice(&(primitive.ty as u32).to_le_bytes());
             let transform = Mat4::from_translation(primitive.pos) * Mat4::from_quat(primitive.rot) * Mat4::from_scale(primitive.scale);
             uniform[i+16..i+80].copy_from_slice(bytes_of(&transform));
@@ -74,6 +86,7 @@ impl Scene {
 
 pub struct AppState {
     pub keys: HashSet<PhysicalKey>,
+    pub last_update: Instant,
     pub camera: Camera,
     pub scene: Scene,
     pub device: Device,
@@ -155,7 +168,7 @@ impl AppState {
 
         let uniform_buffer = device.create_buffer(&BufferDescriptor {
             label: None,
-            size: 2048,
+            size: 16 * 1024,
             usage: BufferUsages::UNIFORM | BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -194,6 +207,16 @@ impl AppState {
                         },
                         count: None,
                     },
+                    BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None
+                        },
+                        count: None,
+                    },
                 ],
             });
         let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -210,7 +233,11 @@ impl AppState {
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 256, size: None }),
+                    resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 4096 + 256, size: None }),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 256, size: NonZero::new(4096) }),
                 },
             ],
         });
@@ -329,11 +356,13 @@ impl AppState {
                 Primitive { ty: PType::Cube, pos: Vec3::ZERO, rot: Quat::IDENTITY, scale: Vec3::ONE },
                 Primitive { ty: PType::Sphere, pos: Vec3::new(0.0, 0.0, 4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
                 Primitive { ty: PType::Disk, pos: Vec3::new(0.0, 0.0, -4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
-            ]
+            ],
+            portals: vec![],
         };
 
         Self {
             keys: Default::default(),
+            last_update: Instant::now(),
             camera: Default::default(),
             scene,
             device,
@@ -456,7 +485,11 @@ impl App {
                     },
                     BindGroupEntry {
                         binding: 2,
-                        resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &state.uniform_buffer, offset: 256, size: None }),
+                        resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &state.uniform_buffer, offset: 4096 + 256, size: None }),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &state.uniform_buffer, offset: 256, size: NonZero::new(4096) }),
                     },
                 ],
             });
@@ -465,19 +498,9 @@ impl App {
 
     fn handle_redraw(&mut self) {
         let state = self.state.as_mut().unwrap();
+        let dt = state.last_update.elapsed().as_secs_f32();
+        state.last_update = Instant::now();
 
-        if state.keys.contains(&PhysicalKey::Code(KeyCode::ArrowLeft)) {
-            state.camera.yaw -= 0.05;
-        }
-        if state.keys.contains(&PhysicalKey::Code(KeyCode::ArrowRight)) {
-            state.camera.yaw += 0.05;
-        }
-        if state.keys.contains(&PhysicalKey::Code(KeyCode::ArrowUp)) {
-            state.camera.pitch -= 0.05;
-        }
-        if state.keys.contains(&PhysicalKey::Code(KeyCode::ArrowDown)) {
-            state.camera.pitch += 0.05;
-        }
         state.camera.pitch = state.camera.pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
 
         let mut movement = Vec2::ZERO;
@@ -494,18 +517,18 @@ impl App {
             movement += Vec2::NEG_X;
         }
         movement = Vec2::from_angle(-state.camera.yaw).rotate(movement);
-        movement /= 10.0;
+        movement *= 8.0 * dt;
         state.camera.pos += Vec3::new(movement.x, 0.0, movement.y);
 
         if state.keys.contains(&PhysicalKey::Code(KeyCode::Space)) {
-            state.camera.pos += Vec3::Y * 0.05;
+            state.camera.pos += Vec3::Y * 4.0 * dt;
         }
         if state.keys.contains(&PhysicalKey::Code(KeyCode::ShiftLeft)) {
-            state.camera.pos += Vec3::Y * -0.05;
+            state.camera.pos += Vec3::NEG_Y * 4.0 * dt;
         }
 
-        state.scene.primitives[0].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), 0.01);
-        state.scene.primitives[2].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), 0.01);
+        state.scene.primitives[0].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), dt);
+        state.scene.primitives[2].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), dt);
 
         // Attempt to handle minimizing window
         if let Some(window) = self.window.as_ref()
@@ -542,7 +565,7 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut data = [0; 2048];
+        let mut data = [0; 16 * 1024];
         state.camera.write_uniform(&mut data);
         state.scene.write_uniform(&mut data);
         state.queue.write_buffer(&state.uniform_buffer, 0, &data);
@@ -706,8 +729,8 @@ impl ApplicationHandler for App {
         ) {
         let state = self.state.as_mut().unwrap();
         if let DeviceEvent::MouseMotion { delta: (x, y) } = event && state.focused_renderer {
-               state.camera.yaw += x as f32 / 768.0;
-               state.camera.pitch += y as f32 / 768.0;
+            state.camera.yaw += x as f32 / 768.0;
+            state.camera.pitch += y as f32 / 768.0;
         }
     }
 }
