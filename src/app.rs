@@ -45,6 +45,7 @@ impl Camera {
 pub enum PType {
     Cube = 1,
     Sphere = 2,
+    Disk = 3,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -327,6 +328,7 @@ impl AppState {
             primitives: vec![
                 Primitive { ty: PType::Cube, pos: Vec3::ZERO, rot: Quat::IDENTITY, scale: Vec3::ONE },
                 Primitive { ty: PType::Sphere, pos: Vec3::new(0.0, 0.0, 4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
+                Primitive { ty: PType::Disk, pos: Vec3::new(0.0, 0.0, -4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
             ]
         };
 
@@ -503,6 +505,7 @@ impl App {
         }
 
         state.scene.primitives[0].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), 0.01);
+        state.scene.primitives[2].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), 0.01);
 
         // Attempt to handle minimizing window
         if let Some(window) = self.window.as_ref()

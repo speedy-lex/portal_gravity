@@ -5,6 +5,12 @@ struct primitive {
     transform: mat4x4f,
     inv_transform: mat4x4f,
 }
+struct portal_pair {
+    transform_a: mat4x4f,
+    inv_transform_a: mat4x4f,
+    transform_b: mat4x4f,
+    inv_transform_b: mat4x4f,
+}
 struct input {
     camera: mat4x4f,
     fov: f32,
@@ -13,6 +19,7 @@ struct input {
 
 @group(0) @binding(1) var<uniform> uniform: input;
 @group(0) @binding(2) var<storage, read> primitives: array<primitive>;
+// @group(0) @binding(3) var<storage, read> portals: array<portal_pair>;
 
 struct hit {
     pos: vec3f,
@@ -88,13 +95,36 @@ fn intersect_sphere(x: ray, transform: mat4x4f, inv_transform: mat4x4f) -> hit {
     let c = dot(oc, oc) - 1;
 
     let discriminant = b*b - 4*a*c;
-    if (discriminant >= 0) {
+    if discriminant >= 0 {
         let dist = (-b - sqrt(discriminant)) / (2*a);
         if dist > 0 {
             let normal = normalize(at(r, dist));
             return hit(at(x, dist), (transform * vec4f(normal, 0)).xyz, dist);
         }
     }
+    return hit(vec3f(0), vec3f(0), 0);
+}
+fn intersect_disk(x: ray, transform: mat4x4f, inv_transform: mat4x4f) -> hit {
+    var r = x;
+    transform_ray(&r, inv_transform);
+    
+    if (r.dir.z != 0) {
+        let t = -r.orig.z / r.dir.z; 
+
+        if t < 0 {
+            return hit(vec3f(0), vec3f(0), 0);
+        }
+        let pos = at(r, t);
+        if dot(pos, pos) > 1 {
+            return hit(vec3f(0), vec3f(0), 0);
+        }
+        let side = sign(r.dir.z) == 1;
+        if side {
+            return hit(at(x, t), (transform * vec4f(0, 0, -1, 0)).xyz, t);
+        }
+        return hit(at(x, t), (transform * vec4f(0, 0, 1, 0)).xyz, t);
+    }
+
     return hit(vec3f(0), vec3f(0), 0);
 }
 
@@ -116,6 +146,16 @@ fn ray_color(r: ray) -> vec3f {
             case 2: {
                 // sphere
                 let hit = intersect_sphere(r, p.transform, p.inv_transform);
+                if hit.t <= 0 {
+                    continue;
+                }
+                if hit.t < closest.t {
+                    closest = hit;
+                }
+            }
+            case 3: {
+                // disk
+                let hit = intersect_disk(r, p.transform, p.inv_transform);
                 if hit.t <= 0 {
                     continue;
                 }
