@@ -172,7 +172,7 @@ fn intersect_portal_pair(x: ray, portal_pair: portal_pair) -> portal_hit {
 
 fn ray_color(x: ray) -> vec3f {
     var r = x;
-    for (var depth: u32 = 0; depth < 4; depth++) {
+    for (var depth: u32 = 0; depth < 32; depth++) {
         var closest = hit(vec3f(0), vec3f(0), 3.4028234e+38); // biggest finite f32
         for (var i: u32 = 0; i < uniform.primitive_count; i++) {
             let p = primitives[i];
