@@ -366,16 +366,16 @@ impl AppState {
         let scene = Scene {
             primitives: vec![
                 Primitive { ty: PType::Cube, pos: Vec3::ZERO, rot: Quat::IDENTITY, scale: Vec3::ONE },
-                Primitive { ty: PType::Sphere, pos: Vec3::new(0.0, 0.0, 4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
+                Primitive { ty: PType::Sphere, pos: Vec3::new(-4.0, 0.0, 0.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
                 Primitive { ty: PType::Disk, pos: Vec3::new(0.0, 0.0, -4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
             ],
             portals: vec![
                 PortalPair {
                     pos_a: Vec3::new(4.0, 0.0, 0.0),
-                    rot_a: Quat::from_rotation_y(FRAC_PI_2),
+                    rot_a: Quat::from_rotation_y(-FRAC_PI_2),
                     scale_a: Vec3::new(1.0, 2.0, 1.0),
-                    pos_b: Vec3::new(-4.0, 0.0, 0.0),
-                    rot_b: Quat::from_rotation_y(FRAC_PI_2),
+                    pos_b: Vec3::new(0.0, 0.0, 4.0),
+                    rot_b: Quat::from_rotation_y(0.0),
                     scale_b: Vec3::new(1.0, 2.0, 1.0),
                 }
             ],
