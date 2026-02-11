@@ -15,17 +15,25 @@ struct input {
     camera: mat4x4f,
     fov: f32,
     primitive_count: u32, 
+    portal_pair_count: u32,
 }
 
 @group(0) @binding(1) var<uniform> uniform: input;
 @group(0) @binding(2) var<storage, read> primitives: array<primitive>;
-// @group(0) @binding(3) var<storage, read> portals: array<portal_pair>;
+@group(0) @binding(3) var<storage, read> portals: array<portal_pair>;
 
 struct hit {
     pos: vec3f,
     normal: vec3f,
     t: f32,
 }
+struct portal_hit {
+    pos: vec3f,
+    uv: vec2f,
+    t: f32,
+    to_other: mat4x4f,
+}
+
 struct ray {
     orig: vec3f,
     dir: vec3f,
@@ -127,51 +135,111 @@ fn intersect_disk(x: ray, transform: mat4x4f, inv_transform: mat4x4f) -> hit {
 
     return hit(vec3f(0), vec3f(0), 0);
 }
+fn intersect_portal_pair(x: ray, portal_pair: portal_pair) -> portal_hit {
+    var r_a = x;
+    transform_ray(&r_a, portal_pair.inv_transform_a);
+    
+    var did_hit = false;
+    var hit: portal_hit;
+    if (r_a.dir.z != 0) {
+        let t = -r_a.orig.z / r_a.dir.z; 
 
-fn ray_color(r: ray) -> vec3f {
-    var closest = hit(vec3f(0), vec3f(0), 3.4028234e+38); // biggest finite f32
-    for (var i: u32 = 0; i < uniform.primitive_count; i++) {
-        let p = primitives[i];
-        switch p.ptype {
-            case 1: {
-                // cube
-                let hit = intersect_box(r, p.transform, p.inv_transform);
-                if hit.t <= 0 {
-                    continue;
-                }
-                if hit.t < closest.t {
-                    closest = hit;
-                }
-            }
-            case 2: {
-                // sphere
-                let hit = intersect_sphere(r, p.transform, p.inv_transform);
-                if hit.t <= 0 {
-                    continue;
-                }
-                if hit.t < closest.t {
-                    closest = hit;
-                }
-            }
-            case 3: {
-                // disk
-                let hit = intersect_disk(r, p.transform, p.inv_transform);
-                if hit.t <= 0 {
-                    continue;
-                }
-                if hit.t < closest.t {
-                    closest = hit;
-                }
-            }
-            default: {
-                return vec3f(1, 0, 1);
+        if t > 1e-5 {
+            let pos = at(r_a, t);
+            if dot(pos, pos) <= 1 {
+                hit = portal_hit(at(x, t), (pos.xy + vec2f(1)) / 2.0, t, portal_pair.transform_b * portal_pair.inv_transform_a);
+                did_hit = true;
             }
         }
     }
-    if closest.t != 3.4028234e+38 {
-        return vec3f(dot(closest.normal, -normalize(vec3f(-1, -3, 0)))) / 4 + vec3f(0.75);
+
+    var r_b = x;
+    transform_ray(&r_b, portal_pair.inv_transform_b);
+    
+    if (r_b.dir.z != 0) {
+        let t = -r_b.orig.z / r_b.dir.z;
+        
+        if t > 1e-5 {
+            let pos = at(r_b, t);
+            if dot(pos, pos) <= 1 && (t < hit.t || !did_hit) {
+                hit = portal_hit(at(x, t), (pos.xy + vec2f(1)) / 2.0, t, portal_pair.transform_a * portal_pair.inv_transform_b);
+            }
+        }
     }
-    return sky_color(normalize(r.dir));
+
+    return hit;
+}
+
+fn ray_color(x: ray) -> vec3f {
+    var r = x;
+    for (var depth: u32 = 0; depth < 4; depth++) {
+        var closest = hit(vec3f(0), vec3f(0), 3.4028234e+38); // biggest finite f32
+        for (var i: u32 = 0; i < uniform.primitive_count; i++) {
+            let p = primitives[i];
+            switch p.ptype {
+                case 1: {
+                    // cube
+                    let hit = intersect_box(r, p.transform, p.inv_transform);
+                    if hit.t <= 0 {
+                        continue;
+                    }
+                    if hit.t < closest.t {
+                        closest = hit;
+                    }
+                }
+                case 2: {
+                    // sphere
+                    let hit = intersect_sphere(r, p.transform, p.inv_transform);
+                    if hit.t <= 0 {
+                        continue;
+                    }
+                    if hit.t < closest.t {
+                        closest = hit;
+                    }
+                }
+                case 3: {
+                    // disk
+                    let hit = intersect_disk(r, p.transform, p.inv_transform);
+                    if hit.t <= 0 {
+                        continue;
+                    }
+                    if hit.t < closest.t {
+                        closest = hit;
+                    }
+                }
+                default: {
+                    return vec3f(1, 0, 1);
+                }
+            }
+        }
+
+        var closest_portal = portal_hit(vec3f(0), vec2f(0), 3.4028234e+38, mat4x4f(vec4f(0), vec4f(0), vec4f(0), vec4f(0)));
+        for (var i: u32 = 0; i < uniform.portal_pair_count; i++) {
+            let p = portals[i];
+            let hit = intersect_portal_pair(r, p);
+            if hit.t <= 0 {
+                continue;
+            }
+            if hit.t < closest_portal.t {
+                closest_portal = hit;
+            }
+        }
+
+        if closest.t == 3.4028234e+38 && closest_portal.t == 3.4028234e+38 {
+            return sky_color(normalize(r.dir));
+        }
+        if closest.t < closest_portal.t {
+            return vec3f(dot(closest.normal, -normalize(vec3f(-1, -3, 0)))) / 4 + vec3f(0.75);
+        }
+
+        if length(closest_portal.uv * 2.0 - vec2f(1.0)) > 0.98 {
+            return vec3f(0);
+        }
+
+        r.orig = closest_portal.pos;
+        transform_ray(&r, closest_portal.to_other);
+    }
+    return vec3f(1, 0, 0);
 }
 
 @compute @workgroup_size(16, 16)

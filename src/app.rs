@@ -75,11 +75,23 @@ pub struct Scene {
 impl Scene {
     pub fn write_uniform(&self, uniform: &mut [u8]) {
         uniform[68..72].copy_from_slice(&(self.primitives.len() as u32).to_le_bytes());
+        uniform[72..76].copy_from_slice(&(self.portals.len() as u32).to_le_bytes());
+
         for (primitive, i) in self.primitives.iter().zip((0..).map(|x| x * 144 + 4096 + 256)) {
             uniform[i..i + 4].copy_from_slice(&(primitive.ty as u32).to_le_bytes());
             let transform = Mat4::from_translation(primitive.pos) * Mat4::from_quat(primitive.rot) * Mat4::from_scale(primitive.scale);
             uniform[i+16..i+80].copy_from_slice(bytes_of(&transform));
             uniform[i+80..i+144].copy_from_slice(bytes_of(&transform.inverse()));
+        }
+
+        for (portal, i) in self.portals.iter().zip((0..).map(|x| x * 256 + 256)) {
+            let transform_a = Mat4::from_translation(portal.pos_a) * Mat4::from_quat(portal.rot_a) * Mat4::from_scale(portal.scale_a);
+            let transform_b = Mat4::from_translation(portal.pos_b) * Mat4::from_quat(portal.rot_b) * Mat4::from_scale(portal.scale_b);
+
+            uniform[i..i+64].copy_from_slice(bytes_of(&transform_a));
+            uniform[i+64..i+128].copy_from_slice(bytes_of(&transform_a.inverse()));
+            uniform[i+128..i+192].copy_from_slice(bytes_of(&transform_b));
+            uniform[i+192..i+256].copy_from_slice(bytes_of(&transform_b.inverse()));
         }
     }
 }
@@ -357,7 +369,16 @@ impl AppState {
                 Primitive { ty: PType::Sphere, pos: Vec3::new(0.0, 0.0, 4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
                 Primitive { ty: PType::Disk, pos: Vec3::new(0.0, 0.0, -4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
             ],
-            portals: vec![],
+            portals: vec![
+                PortalPair {
+                    pos_a: Vec3::new(4.0, 0.0, 0.0),
+                    rot_a: Quat::from_rotation_y(FRAC_PI_2),
+                    scale_a: Vec3::new(1.0, 2.0, 1.0),
+                    pos_b: Vec3::new(-4.0, 0.0, 0.0),
+                    rot_b: Quat::from_rotation_y(FRAC_PI_2),
+                    scale_b: Vec3::new(1.0, 2.0, 1.0),
+                }
+            ],
         };
 
         Self {
