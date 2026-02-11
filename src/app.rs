@@ -1,7 +1,7 @@
 use crate::egui_tools::EguiRenderer;
 use bytemuck::bytes_of;
 use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
-use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
+use glam::{EulerRot, Mat4, Quat, Vec3};
 use winit::event::{DeviceEvent, MouseButton};
 use std::num::NonZero;
 use std::time::Instant;
@@ -21,26 +21,7 @@ use wgpu::{
 };
 use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::WindowEvent, event_loop::ActiveEventLoop, keyboard::{PhysicalKey, KeyCode}, window::{CursorGrabMode, Window, WindowId}};
 
-#[derive(Debug, Clone, Copy)]
-pub struct Camera {
-    pub pos: Vec3,
-    pub pitch: f32,
-    pub yaw: f32,
-    pub fov: f32,
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        Self { pos: Default::default(), pitch: Default::default(), yaw: Default::default(), fov: FRAC_PI_2 }
-    }
-}
-impl Camera {
-    pub fn write_uniform(&self, uniform: &mut [u8]) {
-        let mat = Mat4::from_translation(self.pos) * Mat4::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0);
-        uniform[0..64].copy_from_slice(bytes_of(&mat));
-        uniform[64..68].copy_from_slice(bytes_of(&self.fov));
-    }
-}
+mod camera;
 
 #[derive(Debug, Clone, Copy)]
 pub enum PType {
@@ -56,6 +37,11 @@ pub struct Primitive {
     pub rot: Quat,
     pub scale: Vec3,
 }
+impl Primitive {
+    pub fn get_tranform(&self) -> Mat4 {
+        Mat4::from_translation(self.pos) * Mat4::from_quat(self.rot) * Mat4::from_scale(self.scale)
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct PortalPair {
@@ -65,6 +51,13 @@ pub struct PortalPair {
     pub pos_b: Vec3,
     pub rot_b: Quat,
     pub scale_b: Vec3,
+}
+impl PortalPair {
+    pub fn get_transforms(&self) -> (Mat4, Mat4) {
+        let a = Mat4::from_translation(self.pos_a) * Mat4::from_quat(self.rot_a) * Mat4::from_scale(self.scale_a);
+        let b = Mat4::from_translation(self.pos_b) * Mat4::from_quat(self.rot_b) * Mat4::from_scale(self.scale_b);
+        (a, b)
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -79,15 +72,13 @@ impl Scene {
 
         for (primitive, i) in self.primitives.iter().zip((0..).map(|x| x * 144 + 4096 + 256)) {
             uniform[i..i + 4].copy_from_slice(&(primitive.ty as u32).to_le_bytes());
-            let transform = Mat4::from_translation(primitive.pos) * Mat4::from_quat(primitive.rot) * Mat4::from_scale(primitive.scale);
+            let transform = primitive.get_tranform();
             uniform[i+16..i+80].copy_from_slice(bytes_of(&transform));
             uniform[i+80..i+144].copy_from_slice(bytes_of(&transform.inverse()));
         }
 
-        for (portal, i) in self.portals.iter().zip((0..).map(|x| x * 256 + 256)) {
-            let transform_a = Mat4::from_translation(portal.pos_a) * Mat4::from_quat(portal.rot_a) * Mat4::from_scale(portal.scale_a);
-            let transform_b = Mat4::from_translation(portal.pos_b) * Mat4::from_quat(portal.rot_b) * Mat4::from_scale(portal.scale_b);
-
+        for (portal_pair, i) in self.portals.iter().zip((0..).map(|x| x * 256 + 256)) {
+            let (transform_a, transform_b) = portal_pair.get_transforms();
             uniform[i..i+64].copy_from_slice(bytes_of(&transform_a));
             uniform[i+64..i+128].copy_from_slice(bytes_of(&transform_a.inverse()));
             uniform[i+128..i+192].copy_from_slice(bytes_of(&transform_b));
@@ -99,7 +90,7 @@ impl Scene {
 pub struct AppState {
     pub keys: HashSet<PhysicalKey>,
     pub last_update: Instant,
-    pub camera: Camera,
+    pub camera: camera::Camera,
     pub scene: Scene,
     pub device: Device,
     pub queue: Queue,
@@ -388,8 +379,8 @@ impl AppState {
                     pos_a: Vec3::new(4.0, 0.0, 0.0),
                     rot_a: Quat::from_rotation_y(-FRAC_PI_2),
                     scale_a: Vec3::new(1.0, 2.0, 1.0),
-                    pos_b: Vec3::new(0.0, 0.0, 4.0),
-                    rot_b: Quat::from_rotation_y(0.0),
+                    pos_b: Vec3::new(0.0, 4.0, 0.0),
+                    rot_b: Quat::from_rotation_x(FRAC_PI_2),
                     scale_b: Vec3::new(1.0, 2.0, 1.0),
                 }
             ],
@@ -525,31 +516,33 @@ impl App {
         let dt = state.last_update.elapsed().as_secs_f32();
         state.last_update = Instant::now();
 
-        state.camera.pitch = state.camera.pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
-
-        let mut movement = Vec2::ZERO;
+        
+        let mut movement = Vec3::ZERO;
         if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyW)) {
-            movement += Vec2::Y;
+            movement += Vec3::Z;
         }
         if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyS)) {
-            movement += Vec2::NEG_Y;
+            movement += Vec3::NEG_Z;
         }
         if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyD)) {
-            movement += Vec2::X;
+            movement += Vec3::X;
         }
         if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyA)) {
-            movement += Vec2::NEG_X;
+            movement += Vec3::NEG_X;
         }
-        movement = Vec2::from_angle(-state.camera.yaw).rotate(movement);
         movement *= 8.0 * dt;
-        state.camera.pos += Vec3::new(movement.x, 0.0, movement.y);
+
+        let (yaw, _, _) = (Quat::from_rotation_arc(state.camera.up, Vec3::Y) * state.camera.rot).to_euler(EulerRot::YXZ);
+        movement = Quat::from_rotation_arc(Vec3::Y, state.camera.up) * Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0) * movement;
 
         if state.keys.contains(&PhysicalKey::Code(KeyCode::Space)) {
-            state.camera.pos += Vec3::Y * 4.0 * dt;
+            movement += state.camera.up * 4.0 * dt;
         }
         if state.keys.contains(&PhysicalKey::Code(KeyCode::ShiftLeft)) {
-            state.camera.pos += Vec3::NEG_Y * 4.0 * dt;
+            movement += state.camera.up * -4.0 * dt;
         }
+
+        state.camera.update(movement, &state.scene.portals);
 
         state.scene.primitives[0].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), dt);
         state.scene.primitives[2].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), dt);
@@ -754,8 +747,11 @@ impl ApplicationHandler for App {
         ) {
         let state = self.state.as_mut().unwrap();
         if let DeviceEvent::MouseMotion { delta: (x, y) } = event && state.focused_renderer {
-            state.camera.yaw += x as f32 / 768.0;
-            state.camera.pitch += y as f32 / 768.0;
+            let (mut yaw, mut pitch, _) = (Quat::from_rotation_arc(state.camera.up, Vec3::Y) * state.camera.rot).to_euler(EulerRot::YXZ);
+            yaw += x as f32 / 768.0;
+            pitch += y as f32 / 768.0;
+            pitch = pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+            state.camera.rot = Quat::from_rotation_arc(Vec3::Y, state.camera.up) * Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
         }
     }
 }
