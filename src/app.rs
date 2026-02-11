@@ -109,7 +109,8 @@ pub struct AppState {
     pub sampler: Sampler,
     pub uniform_buffer: Buffer,
     pub compute_pipeline: ComputePipeline,
-    pub compute_bind_group_layout: BindGroupLayout,
+    pub compute_texture_bind_group_layout: BindGroupLayout,
+    pub compute_texture_bind_group: BindGroup,
     pub compute_bind_group: BindGroup,
     pub bind_group_layout: BindGroupLayout,
     pub bind_group: BindGroup,
@@ -185,7 +186,7 @@ impl AppState {
             mapped_at_creation: false,
         });
 
-        let compute_bind_group_layout =
+        let compute_texture_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: None,
                 entries: &[
@@ -199,67 +200,80 @@ impl AppState {
                         },
                         count: None,
                     },
-                    BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None
-                        },
-                        count: None,
-                    },
                 ],
             });
+        let compute_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &compute_texture_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&texture_view),
+                },
+            ],
+        });
+
+        let compute_bind_group_layout  = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None
+                    },
+                    count: None,
+                },
+            ],
+        });
         let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &compute_bind_group_layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: BindingResource::TextureView(&texture_view),
-                },
-                BindGroupEntry {
-                    binding: 1,
                     resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 0, size: NonZero::new(256) }),
                 },
                 BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 4096 + 256, size: None }),
                 },
                 BindGroupEntry {
-                    binding: 3,
+                    binding: 2,
                     resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 256, size: NonZero::new(4096) }),
                 },
             ],
         });
+
         let compute = device.create_shader_module(ShaderModuleDescriptor {
             label: None,
             source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("compute.wgsl"))),
         });
         let desc = PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&compute_bind_group_layout],
+            bind_group_layouts: &[&compute_bind_group_layout, &compute_texture_bind_group_layout],
             push_constant_ranges: &[],
         };
         let layout = device.create_pipeline_layout(&desc);
@@ -394,7 +408,8 @@ impl AppState {
             sampler,
             uniform_buffer,
             compute_pipeline,
-            compute_bind_group_layout,
+            compute_texture_bind_group_layout,
+            compute_texture_bind_group,
             compute_bind_group,
             bind_group_layout,
             bind_group,
@@ -492,25 +507,13 @@ impl App {
                     },
                 ],
             });
-            state.compute_bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            state.compute_texture_bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
-                layout: &state.compute_bind_group_layout,
+                layout: &state.compute_texture_bind_group_layout,
                 entries: &[
                     BindGroupEntry {
                         binding: 0,
                         resource: BindingResource::TextureView(&texture_view),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &state.uniform_buffer, offset: 0, size: NonZero::new(256) }),
-                    },
-                    BindGroupEntry {
-                        binding: 2,
-                        resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &state.uniform_buffer, offset: 4096 + 256, size: None }),
-                    },
-                    BindGroupEntry {
-                        binding: 3,
-                        resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &state.uniform_buffer, offset: 256, size: NonZero::new(4096) }),
                     },
                 ],
             });
@@ -599,6 +602,7 @@ impl App {
             let mut compute_pass =
                 encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             compute_pass.set_bind_group(0, Some(&state.compute_bind_group), &[]);
+            compute_pass.set_bind_group(1, Some(&state.compute_texture_bind_group), &[]);
             compute_pass.set_pipeline(&state.compute_pipeline);
             compute_pass.dispatch_workgroups(
                 state.texture.width().div_ceil(16),

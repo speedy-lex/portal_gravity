@@ -1,4 +1,4 @@
-@group(0) @binding(0) var out: texture_storage_2d<rgba32float, write>;
+@group(1) @binding(0) var out: texture_storage_2d<rgba32float, write>;
 
 struct primitive {
     ptype: u32,
@@ -18,9 +18,9 @@ struct input {
     portal_pair_count: u32,
 }
 
-@group(0) @binding(1) var<uniform> uniform: input;
-@group(0) @binding(2) var<storage, read> primitives: array<primitive>;
-@group(0) @binding(3) var<storage, read> portals: array<portal_pair>;
+@group(0) @binding(0) var<uniform> uniform: input;
+@group(0) @binding(1) var<storage, read> primitives: array<primitive>;
+@group(0) @binding(2) var<storage, read> portals: array<portal_pair>;
 
 struct hit {
     pos: vec3f,
