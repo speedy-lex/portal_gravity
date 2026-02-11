@@ -1,5 +1,6 @@
 use crate::egui_tools::EguiRenderer;
 use bytemuck::bytes_of;
+use egui::DragValue;
 use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
 use glam::{EulerRot, Mat4, Quat, Vec3};
 use winit::event::{DeviceEvent, MouseButton};
@@ -630,29 +631,34 @@ impl App {
         {
             state.egui_renderer.begin_frame(window);
 
-            egui::Window::new("egui window")
+            egui::Window::new("Camera")
                 .resizable(true)
                 .vscroll(true)
                 .default_open(false)
                 .show(state.egui_renderer.context(), |ui| {
-                    ui.label("label");
-
-                    if ui.button("button").clicked() {
-                        println!("click")
-                    }
-
-                    ui.separator();
+                    ui.label("Position");
                     ui.horizontal(|ui| {
-                        ui.label(format!(
-                            "Pixels per point: {}",
-                            state.egui_renderer.context().pixels_per_point()
-                        ));
-                        if ui.button("-").clicked() {
-                            state.scale_factor = (state.scale_factor - 0.1).max(0.3);
-                        }
-                        if ui.button("+").clicked() {
-                            state.scale_factor = (state.scale_factor + 0.1).min(3.0);
-                        }
+                        ui.add(DragValue::new(&mut state.camera.pos.x).speed(0.05));
+                        ui.add(DragValue::new(&mut state.camera.pos.y).speed(0.05));
+                        ui.add(DragValue::new(&mut state.camera.pos.z).speed(0.05));
+                    });
+
+                    ui.label("Up Vector");
+                    if ui.button("Reset Up").clicked() {
+                        state.camera.up = Vec3::Y;
+                    }
+                    ui.horizontal(|ui| {
+                        ui.add(DragValue::new(&mut state.camera.up.x).speed(0.05));
+                        ui.add(DragValue::new(&mut state.camera.up.y).speed(0.05));
+                        ui.add(DragValue::new(&mut state.camera.up.z).speed(0.05));
+                    });
+
+                    ui.label("Rotation");
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}", state.camera.rot.x));
+                        ui.label(format!("{}", state.camera.rot.y));
+                        ui.label(format!("{}", state.camera.rot.z));
+                        ui.label(format!("{}", state.camera.rot.w));
                     });
                 });
 
