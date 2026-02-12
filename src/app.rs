@@ -2,7 +2,7 @@ use crate::egui_tools::EguiRenderer;
 use bytemuck::bytes_of;
 use egui::DragValue;
 use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
-use glam::{EulerRot, Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use winit::event::{DeviceEvent, MouseButton};
 use std::num::NonZero;
 use std::time::Instant;
@@ -533,8 +533,10 @@ impl App {
         }
         movement *= 8.0 * dt;
 
-        let (yaw, _, _) = (Quat::from_rotation_arc(state.camera.up, Vec3::Y) * state.camera.rot).to_euler(EulerRot::YXZ);
-        movement = Quat::from_rotation_arc(Vec3::Y, state.camera.up) * Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0) * movement;
+        let right = state.camera.rot * Vec3::X;
+        let forward = right.cross(state.camera.up);
+
+        movement = right * movement.x + forward * movement.z;
 
         if state.keys.contains(&PhysicalKey::Code(KeyCode::Space)) {
             movement += state.camera.up * 4.0 * dt;
@@ -753,11 +755,20 @@ impl ApplicationHandler for App {
         ) {
         let state = self.state.as_mut().unwrap();
         if let DeviceEvent::MouseMotion { delta: (x, y) } = event && state.focused_renderer {
-            let (mut yaw, mut pitch, _) = (Quat::from_rotation_arc(state.camera.up, Vec3::Y) * state.camera.rot).to_euler(EulerRot::YXZ);
-            yaw += x as f32 / 768.0;
-            pitch += y as f32 / 768.0;
-            pitch = pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
-            state.camera.rot = Quat::from_rotation_arc(Vec3::Y, state.camera.up) * Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+            let right = state.camera.rot * Vec3::X;
+            let forward = right.cross(state.camera.up);
+
+            let looking = state.camera.rot * Vec3::Z;
+            
+            let mut pitch = looking.dot(forward).acos();
+            if looking.dot(state.camera.up) > 0.0 {
+                pitch = -pitch
+            }
+
+            let mut new_pitch = pitch + y as f32 / 768.0;
+            new_pitch = new_pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+
+            state.camera.rot = Quat::from_axis_angle(state.camera.up, x as f32 / 768.0) * Quat::from_axis_angle(right, new_pitch - pitch) * state.camera.rot;
         }
     }
 }
