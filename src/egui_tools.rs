@@ -1,9 +1,10 @@
 use egui::Context;
-use egui_wgpu::wgpu::{CommandEncoder, Device, Queue, StoreOp, TextureFormat, TextureView};
-use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor, wgpu};
+use egui_wgpu::{
+    Renderer, RendererOptions, ScreenDescriptor,
+    wgpu::{self, CommandEncoder, Device, Queue, StoreOp, TextureFormat, TextureView},
+};
 use egui_winit::State;
-use winit::event::WindowEvent;
-use winit::window::Window;
+use winit::{event::WindowEvent, window::Window};
 
 pub struct EguiRenderer {
     state: State,

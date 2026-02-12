@@ -3,12 +3,10 @@ use bytemuck::bytes_of;
 use egui::DragValue;
 use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
 use glam::{Mat4, Quat, Vec3};
-use winit::event::{DeviceEvent, MouseButton};
-use std::num::NonZero;
-use std::time::Instant;
-use std::{borrow::Cow, f32::consts::FRAC_PI_2};
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::{
+    borrow::Cow, collections::HashSet, f32::consts::FRAC_PI_2, num::NonZero, sync::Arc,
+    time::Instant,
+};
 use wgpu::{
     BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
     BindingResource, BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferUsages, Color,
@@ -20,7 +18,14 @@ use wgpu::{
     SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat,
     TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
-use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::WindowEvent, event_loop::ActiveEventLoop, keyboard::{PhysicalKey, KeyCode}, window::{CursorGrabMode, Window, WindowId}};
+use winit::{
+    application::ApplicationHandler,
+    dpi::PhysicalSize,
+    event::{DeviceEvent, MouseButton, WindowEvent},
+    event_loop::ActiveEventLoop,
+    keyboard::{KeyCode, PhysicalKey},
+    window::{CursorGrabMode, Window, WindowId},
+};
 
 mod camera;
 
@@ -55,8 +60,12 @@ pub struct PortalPair {
 }
 impl PortalPair {
     pub fn get_transforms(&self) -> (Mat4, Mat4) {
-        let a = Mat4::from_translation(self.pos_a) * Mat4::from_quat(self.rot_a) * Mat4::from_scale(self.scale_a);
-        let b = Mat4::from_translation(self.pos_b) * Mat4::from_quat(self.rot_b) * Mat4::from_scale(self.scale_b);
+        let a = Mat4::from_translation(self.pos_a)
+            * Mat4::from_quat(self.rot_a)
+            * Mat4::from_scale(self.scale_a);
+        let b = Mat4::from_translation(self.pos_b)
+            * Mat4::from_quat(self.rot_b)
+            * Mat4::from_scale(self.scale_b);
         (a, b)
     }
 }
@@ -71,19 +80,23 @@ impl Scene {
         uniform[68..72].copy_from_slice(&(self.primitives.len() as u32).to_le_bytes());
         uniform[72..76].copy_from_slice(&(self.portals.len() as u32).to_le_bytes());
 
-        for (primitive, i) in self.primitives.iter().zip((0..).map(|x| x * 144 + 4096 + 256)) {
+        for (primitive, i) in self
+            .primitives
+            .iter()
+            .zip((0..).map(|x| x * 144 + 4096 + 256))
+        {
             uniform[i..i + 4].copy_from_slice(&(primitive.ty as u32).to_le_bytes());
             let transform = primitive.get_tranform();
-            uniform[i+16..i+80].copy_from_slice(bytes_of(&transform));
-            uniform[i+80..i+144].copy_from_slice(bytes_of(&transform.inverse()));
+            uniform[i + 16..i + 80].copy_from_slice(bytes_of(&transform));
+            uniform[i + 80..i + 144].copy_from_slice(bytes_of(&transform.inverse()));
         }
 
         for (portal_pair, i) in self.portals.iter().zip((0..).map(|x| x * 256 + 256)) {
             let (transform_a, transform_b) = portal_pair.get_transforms();
-            uniform[i..i+64].copy_from_slice(bytes_of(&transform_a));
-            uniform[i+64..i+128].copy_from_slice(bytes_of(&transform_a.inverse()));
-            uniform[i+128..i+192].copy_from_slice(bytes_of(&transform_b));
-            uniform[i+192..i+256].copy_from_slice(bytes_of(&transform_b.inverse()));
+            uniform[i..i + 64].copy_from_slice(bytes_of(&transform_a));
+            uniform[i + 64..i + 128].copy_from_slice(bytes_of(&transform_a.inverse()));
+            uniform[i + 128..i + 192].copy_from_slice(bytes_of(&transform_b));
+            uniform[i + 192..i + 256].copy_from_slice(bytes_of(&transform_b.inverse()));
         }
     }
 }
@@ -181,80 +194,89 @@ impl AppState {
         let compute_texture_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: None,
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: TextureFormat::Rgba32Float,
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                    count: None,
+                }],
+            });
+        let compute_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &compute_texture_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&texture_view),
+            }],
+        });
+
+        let compute_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: None,
                 entries: &[
                     BindGroupLayoutEntry {
                         binding: 0,
                         visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: TextureFormat::Rgba32Float,
-                            view_dimension: TextureViewDimension::D2,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
                         count: None,
                     },
                 ],
             });
-        let compute_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &compute_texture_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(&texture_view),
-                },
-            ],
-        });
-
-        let compute_bind_group_layout  = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None
-                    },
-                    count: None,
-                },
-            ],
-        });
         let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &compute_bind_group_layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 0, size: NonZero::new(256) }),
+                    resource: BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &uniform_buffer,
+                        offset: 0,
+                        size: NonZero::new(256),
+                    }),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 4096 + 256, size: None }),
+                    resource: BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &uniform_buffer,
+                        offset: 4096 + 256,
+                        size: None,
+                    }),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 256, size: NonZero::new(4096) }),
+                    resource: BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &uniform_buffer,
+                        offset: 256,
+                        size: NonZero::new(4096),
+                    }),
                 },
             ],
         });
@@ -265,7 +287,10 @@ impl AppState {
         });
         let desc = PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&compute_bind_group_layout, &compute_texture_bind_group_layout],
+            bind_group_layouts: &[
+                &compute_bind_group_layout,
+                &compute_texture_bind_group_layout,
+            ],
             push_constant_ranges: &[],
         };
         let layout = device.create_pipeline_layout(&desc);
@@ -371,20 +396,33 @@ impl AppState {
 
         let scene = Scene {
             primitives: vec![
-                Primitive { ty: PType::Cube, pos: Vec3::new(0.0, 4.0, 0.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
-                Primitive { ty: PType::Sphere, pos: Vec3::new(0.0, 0.0, 4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
-                Primitive { ty: PType::Disk, pos: Vec3::new(0.0, 0.0, -4.0), rot: Quat::IDENTITY, scale: Vec3::ONE },
+                Primitive {
+                    ty: PType::Cube,
+                    pos: Vec3::new(0.0, 4.0, 0.0),
+                    rot: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+                Primitive {
+                    ty: PType::Sphere,
+                    pos: Vec3::new(0.0, 0.0, 4.0),
+                    rot: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
+                Primitive {
+                    ty: PType::Disk,
+                    pos: Vec3::new(0.0, 0.0, -4.0),
+                    rot: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                },
             ],
-            portals: vec![
-                PortalPair {
-                    pos_a: Vec3::new(4.0, 0.0, 0.0),
-                    rot_a: Quat::from_rotation_y(-FRAC_PI_2),
-                    scale_a: Vec3::new(1.0, 2.0, 1.0),
-                    pos_b: Vec3::new(0.0, -4.0, 0.0),
-                    rot_b: Quat::from_rotation_x(FRAC_PI_2),
-                    scale_b: Vec3::new(1.0, 2.0, 1.0),
-                }
-            ],
+            portals: vec![PortalPair {
+                pos_a: Vec3::new(4.0, 0.0, 0.0),
+                rot_a: Quat::from_rotation_y(-FRAC_PI_2),
+                scale_a: Vec3::new(1.0, 2.0, 1.0),
+                pos_b: Vec3::new(0.0, -4.0, 0.0),
+                rot_b: Quat::from_rotation_x(FRAC_PI_2),
+                scale_b: Vec3::new(1.0, 2.0, 1.0),
+            }],
         };
 
         Self {
@@ -499,16 +537,15 @@ impl App {
                     },
                 ],
             });
-            state.compute_texture_bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &state.compute_texture_bind_group_layout,
-                entries: &[
-                    BindGroupEntry {
+            state.compute_texture_bind_group =
+                state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &state.compute_texture_bind_group_layout,
+                    entries: &[BindGroupEntry {
                         binding: 0,
                         resource: BindingResource::TextureView(&texture_view),
-                    },
-                ],
-            });
+                    }],
+                });
         }
     }
 
@@ -517,7 +554,6 @@ impl App {
         let dt = state.last_update.elapsed().as_secs_f32();
         state.last_update = Instant::now();
 
-        
         let mut movement = Vec3::ZERO;
         if state.keys.contains(&PhysicalKey::Code(KeyCode::KeyW)) {
             movement += Vec3::Z;
@@ -547,8 +583,10 @@ impl App {
 
         state.camera.update(movement, &state.scene.portals);
 
-        state.scene.primitives[0].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), dt);
-        state.scene.primitives[2].rot *= Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), dt);
+        state.scene.primitives[0].rot *=
+            Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), dt);
+        state.scene.primitives[2].rot *=
+            Quat::from_axis_angle(Vec3::new(1.0, 1.0, 0.0).normalize(), dt);
 
         // Attempt to handle minimizing window
         if let Some(window) = self.window.as_ref()
@@ -709,7 +747,14 @@ impl ApplicationHandler for App {
                 self.handle_resized(new_size.width, new_size.height);
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if !self.state.as_mut().unwrap().egui_renderer.context().wants_keyboard_input() {
+                if !self
+                    .state
+                    .as_mut()
+                    .unwrap()
+                    .egui_renderer
+                    .context()
+                    .wants_keyboard_input()
+                {
                     match event.state {
                         winit::event::ElementState::Pressed => {
                             self.state.as_mut().unwrap().keys.insert(event.physical_key);
@@ -717,7 +762,13 @@ impl ApplicationHandler for App {
                                 self.state.as_mut().unwrap().focused_renderer = false;
                             }
                         }
-                        winit::event::ElementState::Released => { self.state.as_mut().unwrap().keys.remove(&event.physical_key); }
+                        winit::event::ElementState::Released => {
+                            self.state
+                                .as_mut()
+                                .unwrap()
+                                .keys
+                                .remove(&event.physical_key);
+                        }
                     }
                 }
             }
@@ -728,38 +779,36 @@ impl ApplicationHandler for App {
             }
             _ => (),
         }
-        let state = self.state
-            .as_mut()
-            .unwrap();
+        let state = self.state.as_mut().unwrap();
         state.focused_renderer &= !state.egui_renderer.context().wants_pointer_input();
 
         let window = self.window.as_mut().unwrap();
         window.set_cursor_visible(!state.focused_renderer);
-        let _ = window.set_cursor_grab(
-            if state.focused_renderer {
-                CursorGrabMode::Locked
-            } else {
-                CursorGrabMode::None
-            }
-        );
+        let _ = window.set_cursor_grab(if state.focused_renderer {
+            CursorGrabMode::Locked
+        } else {
+            CursorGrabMode::None
+        });
         if !state.focused_renderer {
             state.keys.clear();
         }
     }
 
     fn device_event(
-            &mut self,
-            _event_loop: &ActiveEventLoop,
-            _device_id: winit::event::DeviceId,
-            event: winit::event::DeviceEvent,
-        ) {
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
         let state = self.state.as_mut().unwrap();
-        if let DeviceEvent::MouseMotion { delta: (x, y) } = event && state.focused_renderer {
+        if let DeviceEvent::MouseMotion { delta: (x, y) } = event
+            && state.focused_renderer
+        {
             let right = state.camera.rot * Vec3::X;
             let forward = right.cross(state.camera.up);
 
             let looking = state.camera.rot * Vec3::Z;
-            
+
             let mut pitch = looking.dot(forward).acos();
             if looking.dot(state.camera.up) > 0.0 {
                 pitch = -pitch
@@ -768,7 +817,9 @@ impl ApplicationHandler for App {
             let mut new_pitch = pitch + y as f32 / 768.0;
             new_pitch = new_pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
 
-            state.camera.rot = Quat::from_axis_angle(state.camera.up, x as f32 / 768.0) * Quat::from_axis_angle(right, new_pitch - pitch) * state.camera.rot;
+            state.camera.rot = Quat::from_axis_angle(state.camera.up, x as f32 / 768.0)
+                * Quat::from_axis_angle(right, new_pitch - pitch)
+                * state.camera.rot;
         }
     }
 }

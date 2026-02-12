@@ -52,7 +52,12 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Self {
-        Self { pos: Default::default(), rot: Quat::IDENTITY, up: Vec3::Y, fov: FRAC_PI_2 }
+        Self {
+            pos: Default::default(),
+            rot: Quat::IDENTITY,
+            up: Vec3::Y,
+            fov: FRAC_PI_2,
+        }
     }
 }
 impl Camera {
@@ -69,7 +74,7 @@ impl Camera {
 
         for portal_pair in portals {
             let (transform_a, transform_b) = portal_pair.get_transforms();
-            
+
             if segment.intersect_disk(transform_a.inverse()) {
                 let transform = transform_b * transform_a.inverse();
                 self.pos = (transform * segment).end;
@@ -89,5 +94,3 @@ impl Camera {
         self.pos = segment.end;
     }
 }
-
-
