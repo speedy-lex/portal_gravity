@@ -1,12 +1,12 @@
 name:
-    check
+    build
 on:
   workflow_dispatch
 permissions:
     contents: read
 jobs:
     build:
-        name: check
+        name: build
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5
@@ -25,3 +25,30 @@ jobs:
               with:
                 name: portal_gravity
                 path: target/release/portal_gravity
+    build-win:
+        name: build-win
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+            - name: Setup rust
+              uses: actions-rs/toolchain@v1
+              with:
+                toolchain: stable
+            # - name: Install system dependencies
+            #   run:
+            #     sudo apt-get update
+            - name: Install windows target
+              run:
+                rustup target add x86_64-pc-windows-gnu
+            - name: Install mingw
+              run:
+                sudo apt-get install gcc-mingw-w64-x86-64
+            - name: Build
+              run:
+                cargo build --release --target=x86_64-pc-windows-gnu
+            - name: Upload release artifact
+              uses: actions/upload-artifact@v4
+              with:
+                name: portal_gravity.exe
+                path: target/x86_64-pc-windows-gnu/release/portal_gravity.exe
+
