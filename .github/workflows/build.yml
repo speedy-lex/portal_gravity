@@ -1,0 +1,27 @@
+name:
+    check
+on:
+  workflow_dispatch
+permissions:
+    contents: read
+jobs:
+    build:
+        name: check
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+            - name: Setup rust
+              uses: actions-rs/toolchain@v1
+              with:
+                toolchain: stable
+            # - name: Install system dependencies
+            #   run:
+            #     sudo apt-get update
+            - name: Build
+              run:
+                cargo build --release
+            - name: Upload release artifact
+              uses: actions/upload-artifact@v4
+              with:
+                name: portal_gravity
+                path: target/release/portal_gravity
