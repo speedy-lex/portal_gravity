@@ -1,4 +1,4 @@
-use crate::egui_tools::EguiRenderer;
+use crate::{egui_tools::EguiRenderer, poisson::Simulation};
 use bytemuck::bytes_of;
 use egui::DragValue;
 use egui_wgpu::{ScreenDescriptor, wgpu::SurfaceError};
@@ -424,6 +424,8 @@ impl AppState {
                 scale_b: Vec3::new(1.0, 2.0, 1.0),
             }],
         };
+
+        let simulation = Simulation::new(Vec3::NEG_ONE * 20.0, Vec3::ONE * 20.0, &scene.portals);
 
         Self {
             keys: Default::default(),

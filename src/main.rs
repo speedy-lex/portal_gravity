@@ -1,5 +1,6 @@
 mod app;
 mod egui_tools;
+pub mod poisson;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
