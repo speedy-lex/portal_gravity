@@ -425,7 +425,7 @@ impl AppState {
             }],
         };
 
-        let simulation = Simulation::new(Vec3::NEG_ONE * 20.0, Vec3::ONE * 20.0, &scene.portals);
+        let simulation = Simulation::new(Vec3::NEG_ONE * 20.0, 40.0, &scene.portals);
 
         Self {
             keys: Default::default(),

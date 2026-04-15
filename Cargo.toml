@@ -9,6 +9,7 @@ egui = "0.33.3"
 egui-wgpu = { version = "0.33.3", features = ["winit"] }
 egui-winit = "0.33.3"
 glam = { version = "0.30.9", features = ["bytemuck", "rand"] }
+itertools = "0.14.0"
 pollster = "0.4.0"
 rand = "0.9.2"
 wgpu = "27.0.1"
